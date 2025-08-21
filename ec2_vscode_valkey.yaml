@@ -445,6 +445,42 @@ Resources:
         - Key: Name
           Value: !Sub '${AWS::StackName}-EC2-SG'
 
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ALB
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-ALB-SG'
+
+  VSCodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for VSCode EC2
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8888
+          ToPort: 8888
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-VSCode-SG'
+
   ElastiCacheSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -454,7 +490,7 @@ Resources:
         - IpProtocol: tcp
           FromPort: 6379
           ToPort: 6379
-          SourceSecurityGroupId: !Ref EC2SecurityGroup
+          SourceSecurityGroupId: !Ref VSCodeSecurityGroup
       Tags:
         - Key: Name
           Value: !Sub '${AWS::StackName}-ElastiCache-SG'
@@ -465,6 +501,17 @@ Resources:
 ############################################################################################
 ############################################################################################
 
+  ValkeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${AWS::StackName}-valkey-secret'
+      Description: Valkey authentication credentials
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "valkeyuser"}'
+        GenerateStringKey: 'password'
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'
+
   ElastiCacheSubnetGroup:
     Type: AWS::ElastiCache::SubnetGroup
     Properties:
@@ -474,17 +521,38 @@ Resources:
         - !Ref PrivateSubnetD
       CacheSubnetGroupName: !Sub '${AWS::StackName}-elasticache-subnet-group'
 
+  ValkeyUserGroup:
+    Type: AWS::ElastiCache::UserGroup
+    Properties:
+      UserGroupId: !Sub '${AWS::StackName}-valkey-usergroup'
+      Engine: valkey
+      UserIds:
+        - !Ref ValkeyUser
+
+  ValkeyUser:
+    Type: AWS::ElastiCache::User
+    Properties:
+      UserId: !Sub '${AWS::StackName}-valkey-user'
+      UserName: valkeyuser
+      Engine: valkey
+      Passwords:
+        - !Sub '{{resolve:secretsmanager:${ValkeySecret}:SecretString:password}}'
+      AccessString: "on ~* +@all"
+
   ValkeyReplicationGroup:
     Type: AWS::ElastiCache::ReplicationGroup
     Properties:
       ReplicationGroupId: !Sub '${AWS::StackName}-valkey-cluster'
       ReplicationGroupDescription: Valkey cluster with 2 shards (1 writer + 1 reader each)
       Engine: valkey
-      TransitEncryptionEnabled : false
+      TransitEncryptionEnabled: false
+      AtRestEncryptionEnabled: true
       CacheNodeType: cache.r7g.large
       CacheSubnetGroupName: !Ref ElastiCacheSubnetGroup
       SecurityGroupIds:
         - !Ref ElastiCacheSecurityGroup
+      UserGroupIds:
+        - !Ref ValkeyUserGroup
       AutomaticFailoverEnabled: true
       MultiAZEnabled: true
       NumNodeGroups: 2
@@ -493,6 +561,66 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub '${AWS::StackName}-valkey-cluster'
+
+############################################################################################
+############################################################################################
+# Create IAM Role                            ###############################################
+############################################################################################
+############################################################################################
+
+############################################################################################
+############################################################################################
+# Create ALB                                 ###############################################
+############################################################################################
+############################################################################################
+
+  InternetALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${AWS::StackName}-InternetALB'
+      Scheme: internet-facing
+      Type: application
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Subnets:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-InternetALB'
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref InternetALB
+      Port: 80
+      Protocol: HTTP
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${AWS::StackName}-ALB-TG'
+      Port: 8888
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      HealthCheckPath: /
+      HealthCheckPort: 8888
+      HealthCheckProtocol: HTTP
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 2
+      HealthCheckTimeoutSeconds: 5
+      HealthCheckIntervalSeconds: 30
+      Matcher:
+        HttpCode: 200
+      Targets:
+        - Id: !Ref VSCodeServer
+          Port: 8888
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-ALB-TG'
 
 ############################################################################################
 ############################################################################################
@@ -512,6 +640,15 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref ValkeySecret
       Tags:
         - Key: Name
           Value: !Sub '${AWS::StackName}-EC2-Role'
@@ -528,25 +665,65 @@ Resources:
 ############################################################################################
 ############################################################################################
 
-  EC2Instance:
+  VSCodeServer:
     Type: AWS::EC2::Instance
     Properties:
       ImageId: !Ref AmazonLinux2023AmiId
       InstanceType: !Ref InstanceType1
-      SubnetId: !Ref PublicSubnetA
+      SubnetId: !Ref PrivateSubnetA
       SecurityGroupIds:
-        - !Ref EC2SecurityGroup
+        - !Ref VSCodeSecurityGroup
       IamInstanceProfile: !Ref EC2InstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 50
+            VolumeType: gp3
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
           yum update -y
-          yum install -y redis6
+          yum install -y redis6 git jq
+          # VS Code Server 설치
+          wget https://github.com/coder/code-server/releases/download/v4.96.4/code-server-4.96.4-linux-amd64.tar.gz
+          tar -xzf code-server-4.96.4-linux-amd64.tar.gz
+          mv code-server-4.96.4-linux-amd64 /usr/local/lib/code-server
+          ln -s /usr/local/lib/code-server/bin/code-server /usr/local/bin/code-server
+          # VS Code Server 설정
+          mkdir -p /home/ec2-user/.config/code-server
+          cat <<EOF > /home/ec2-user/.config/code-server/config.yaml
+          bind-addr: 0.0.0.0:8888
+          auth: none
+          cert: false
+          EOF
+          chown -R ec2-user:ec2-user /home/ec2-user/.config
+          # VS Code Server 서비스 구성
+          cat <<EOF > /etc/systemd/system/code-server.service
+          [Unit]
+          Description=VS Code Server
+          After=network.target
+          [Service]
+          Type=simple
+          User=ec2-user
+          ExecStart=/usr/local/bin/code-server --config /home/ec2-user/.config/code-server/config.yaml
+          Restart=always
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          systemctl daemon-reload
+          systemctl enable code-server
+          systemctl start code-server
+          # Valkey 연결 정보 저장
           echo "Valkey configuration endpoint: ${ValkeyReplicationGroup.ConfigurationEndPoint.Address}" > /home/ec2-user/valkey-info.txt
           echo "Valkey port: ${ValkeyReplicationGroup.ConfigurationEndPoint.Port}" >> /home/ec2-user/valkey-info.txt
+          echo "Valkey secret ARN: ${ValkeySecret}" >> /home/ec2-user/valkey-info.txt
+          # Valkey 인증 정보 가져오기
+          VALKEY_PASSWORD=$(aws secretsmanager get-secret-value --secret-id ${ValkeySecret} --region ${AWS::Region} --query SecretString --output text | jq -r .password)
+          echo "Valkey username: valkeyuser" >> /home/ec2-user/valkey-info.txt
+          echo "Use 'aws secretsmanager get-secret-value --secret-id ${ValkeySecret}' to get password" >> /home/ec2-user/valkey-info.txt
       Tags:
         - Key: Name
-          Value: !Sub '${AWS::StackName}-EC2'
+          Value: !Sub '${AWS::StackName}-VSCodeServer'
 
 ############################################################################################
 ############################################################################################
@@ -561,11 +738,17 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-VPC-ID'
 
-  EC2InstanceId:
-    Description: EC2 Instance ID
-    Value: !Ref EC2Instance
+  VSCodeServerInstanceId:
+    Description: VSCode Server Instance ID
+    Value: !Ref VSCodeServer
     Export:
-      Name: !Sub '${AWS::StackName}-EC2-ID'
+      Name: !Sub '${AWS::StackName}-VSCodeServer-ID'
+
+  ALBDNSName:
+    Description: ALB DNS Name
+    Value: !GetAtt InternetALB.DNSName
+    Export:
+      Name: !Sub '${AWS::StackName}-ALB-DNS'
 
   ValkeyConfigurationEndpoint:
     Description: Valkey Configuration Endpoint
@@ -578,3 +761,9 @@ Outputs:
     Value: !GetAtt ValkeyReplicationGroup.ConfigurationEndPoint.Port
     Export:
       Name: !Sub '${AWS::StackName}-Valkey-Config-Port'
+
+  ValkeySecretArn:
+    Description: Valkey Secret ARN
+    Value: !Ref ValkeySecret
+    Export:
+      Name: !Sub '${AWS::StackName}-Valkey-Secret-ARN'
