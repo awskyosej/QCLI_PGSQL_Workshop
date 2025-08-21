@@ -545,7 +545,7 @@ Resources:
       ReplicationGroupId: !Sub '${AWS::StackName}-valkey-cluster'
       ReplicationGroupDescription: Valkey cluster with 2 shards (1 writer + 1 reader each)
       Engine: valkey
-      TransitEncryptionEnabled: false
+      TransitEncryptionEnabled: true
       AtRestEncryptionEnabled: true
       CacheNodeType: cache.r7g.large
       CacheSubnetGroupName: !Ref ElastiCacheSubnetGroup
