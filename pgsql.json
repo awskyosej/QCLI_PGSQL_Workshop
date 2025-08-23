@@ -1,0 +1,91 @@
+{
+  "$schema": "https://raw.githubusercontent.com/aws/amazon-q-developer-cli/refs/heads/main/schemas/agent-v1.json",
+  "name": "pgsql",
+  "description": "",
+  "prompt": null,
+  "mcpServers": {
+    "awslabs.aws-api-mcp-server": {
+      "command": "uvx",
+      "args": [
+        "awslabs.aws-api-mcp-server@latest"
+      ],
+      "env": {
+        "AWS_REGION": "ap-northeast-2"
+      },
+      "timeout": 120000,
+      "disabled": false
+    },
+    "awslabs.postgres-mcp-server": {
+      "command": "uvx",
+      "args": [
+        "awslabs.postgres-mcp-server@latest",
+        "--resource_arn",
+        "<Aurora Cluster ARN>",
+        "--secret_arn", 
+        "<Secrets ARN>",
+        "--database",
+        "postgres",
+        "--region",
+        "ap-northeast-2",
+        "--readonly",
+        "False"
+      ],
+      "env": {
+        "AWS_PROFILE": "default",
+        "AWS_REGION": "ap-northeast-2",
+        "FASTMCP_LOG_LEVEL": "DEBUG"
+      },
+      "timeout": 120000,
+      "disabled": false
+    },
+    "awslabs.cloudwatch-mcp-server": {
+      "command": "uvx",
+      "args": [
+        "awslabs.cloudwatch-mcp-server@latest"
+      ],
+      "env": {
+        "AWS_PROFILE": "default",
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      },
+      "timeout": 120000,
+      "disabled": false
+    },
+    "aws-knowledge-mcp-server": {
+            "command": "uvx",
+            "args": [
+                "mcp-proxy",
+                "--transport",
+                "streamablehttp",
+                "https://knowledge-mcp.global.api.aws"
+            ]
+    },
+    "aws-cost": {
+      "command": "uvx",
+      "args": [
+        "-m",
+        "mcp_server_aws_cost"
+      ],
+      "env": {
+        "AWS_REGION": "ap-northeast-2",
+        "AWS_PROFILE": "default"
+      }
+    }
+  },
+  "tools": [
+    "*"
+  ],
+  "toolAliases": {},
+  "allowedTools": [
+    "fs_read"
+  ],
+  "resources": [
+    "file://AmazonQ.md",
+    "file://README.md",
+    "file://.amazonq/rules/**/*.md"
+  ],
+  "hooks": {
+  
+  },
+  "toolsSettings": {},
+  "useLegacyMcpJson": true
+}
