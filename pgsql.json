@@ -15,28 +15,13 @@
       "timeout": 120000,
       "disabled": false
     },
-    "awslabs.postgres-mcp-server": {
-      "command": "uvx",
+    "postgres": {
+      "command": "npx",
       "args": [
-        "awslabs.postgres-mcp-server@latest",
-        "--resource_arn",
-        "<Aurora Cluster ARN>",
-        "--secret_arn", 
-        "<Secrets ARN>",
-        "--database",
-        "postgres",
-        "--region",
-        "ap-northeast-2",
-        "--readonly",
-        "False"
-      ],
-      "env": {
-        "AWS_PROFILE": "default",
-        "AWS_REGION": "ap-northeast-2",
-        "FASTMCP_LOG_LEVEL": "DEBUG"
-      },
-      "timeout": 120000,
-      "disabled": false
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://postgres:PASSWORD@HOST:5432/DBNAME"
+      ]
     },
     "awslabs.cloudwatch-mcp-server": {
       "command": "uvx",
@@ -51,24 +36,28 @@
       "disabled": false
     },
     "aws-knowledge-mcp-server": {
-            "command": "uvx",
-            "args": [
-                "mcp-proxy",
-                "--transport",
-                "streamablehttp",
-                "https://knowledge-mcp.global.api.aws"
-            ]
-    },
-    "aws-cost": {
       "command": "uvx",
       "args": [
-        "-m",
-        "mcp_server_aws_cost"
+        "mcp-proxy",
+        "--transport",
+        "streamablehttp",
+        "https://knowledge-mcp.global.api.aws"
+      ],
+      "timeout": 120000,
+      "disabled": false
+    },
+    "awslabs.aws-pricing-mcp-server": {
+      "command": "uvx",
+      "args": [
+         "awslabs.aws-pricing-mcp-server@latest"
       ],
       "env": {
-        "AWS_REGION": "ap-northeast-2",
-        "AWS_PROFILE": "default"
-      }
+        "FASTMCP_LOG_LEVEL": "ERROR",
+        "AWS_PROFILE": "default",
+        "AWS_REGION": "ap-northeast-2"
+      },
+      "disabled": false,
+      "autoApprove": []
     }
   },
   "tools": [
